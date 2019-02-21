@@ -25,6 +25,17 @@ struct ColorCount
 	}
 };
 
+template<class Iter, class T>
+Iter binary_find(Iter begin, Iter end, T val)
+{
+	// Finds the lower bound in at most log(last - first) + 1 comparisons
+	Iter i = std::lower_bound(begin, end, val);
+
+	if (i != end && !(val < *i))
+		return i; // found
+	else
+		return end; // not found
+}
 BYTE merge(BYTE col0, BYTE col1)
 {
 	int merge = col0;
@@ -32,14 +43,14 @@ BYTE merge(BYTE col0, BYTE col1)
 	merge /= 2;
 	return (BYTE)merge;
 }
-constexpr int TABLE_SIZE = 256;
+constexpr int TABLE_SIZE = 256 * 256;
 int main()
 {
 	std::vector<ColorCount> colorCounter;
 	Color24 colorTable[TABLE_SIZE];
 
 	int width, height, comp;
-	Color24* data = reinterpret_cast<Color24*>(stbi_load("Images/Sample2.jpg", &width, &height, &comp, 0));
+	Color24* data = reinterpret_cast<Color24*>(stbi_load("Images/lol1.jpg", &width, &height, &comp, 0));
 	if (data)
 	{
 		printf("Reading image done!\nWidth=(%i)\nHeight=(%i)\nComp=(%i)\n", width, height, comp);
@@ -73,6 +84,7 @@ int main()
 
 	int colorCounterSize = colorCounter.size();
 	std::vector<Color24> colorCounter2;
+	//if(false)
 	if (colorCounterSize > TABLE_SIZE)
 	{
 		for (int i = 0; i < colorCounterSize - 1; i++)
@@ -96,11 +108,11 @@ int main()
 			if (minimumSize < 120)
 			{
 
-				Color24 colorMerge;
+				/*Color24 colorMerge;
 				colorMerge.r = merge(colorCounter[i].color.r, colorCounter[closestMatch].color.r);
 				colorMerge.g = merge(colorCounter[i].color.g, colorCounter[closestMatch].color.g);
 				colorMerge.b = merge(colorCounter[i].color.b, colorCounter[closestMatch].color.b);
-				colorCounter[i].color = colorMerge;
+				colorCounter[i].color = colorMerge;*/
 
 				colorCounter.erase(colorCounter.begin() + closestMatch);
 			
