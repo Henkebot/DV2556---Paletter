@@ -1,0 +1,9 @@
+﻿  Paletter.cpp
+d:\skola\dv2556 forskningsmetodik\dv2556-paletter\paletter\paletter.cpp(96): warning C4018: '<': signed/unsigned mismatch
+d:\skola\dv2556 forskningsmetodik\dv2556-paletter\paletter\paletter.cpp(113): warning C4244: 'initializing': conversion from 'double' to 'float', possible loss of data
+  Generating code
+  1 of 278 functions ( 0.4%) were compiled, the rest were copied from previous compilation.
+    0 functions were new in current compilation
+    0 functions had inline decision re-evaluated but remain unchanged
+  Finished generating code
+  Paletter.vcxproj -> D:\Skola\DV2556 Forskningsmetodik\DV2556-Paletter\Release\Paletter.exe
