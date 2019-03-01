@@ -6,6 +6,7 @@
 #include <d3dcompiler.h>
 #include <dxgi1_6.h> //Only used for initialization of the device and swap chain.
 using namespace DirectX;
+
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "DXGI.lib")
 #pragma comment(lib, "d3dcompiler.lib")
@@ -35,7 +36,7 @@ using namespace Microsoft::WRL;
 
 inline void TIF(HRESULT hr)
 {
-#if _DEBUG
+#ifdef _DEBUG
 	if(FAILED(hr))
 	{
 		_com_error err(hr);

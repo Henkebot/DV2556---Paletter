@@ -117,6 +117,9 @@ v22;
 v27;
 }
 
+#define SQRT2 1.4142135623730950488016887242097
+#define SQRT8 2.8284271247461900976033774484194
+
 void DCT(in float Input[8][8], out float Output[8][8])
 {
     int i, j;
@@ -130,20 +133,20 @@ void DCT(in float Input[8][8], out float Output[8][8])
         {
             if (i == 0)
             {
-                ci = 1.0 / sqrt(8);
+                ci = 1.0 / SQRT8;
             }
             else
             {
-                ci = sqrt(2) / sqrt(8);
+                ci = SQRT2 / SQRT8;
             }
 
             if (j == 0)
             {
-                cj = 1.0 / sqrt(8);
+                cj = 1.0 / SQRT8;
             }
             else
             {
-                cj = sqrt(2) / sqrt(8);
+                cj = SQRT2 / SQRT8;
             }
 
             sum = 0.0f;
@@ -160,22 +163,11 @@ void DCT(in float Input[8][8], out float Output[8][8])
             dct[i][j] = ci * cj * sum;
         }
     }
-
-    float quant[8][8];
     for (i = 0; i < 8; i++)
     {
         for (j = 0; j < 8; j++)
         {
-            quant[i][j] = round(dct[i][j] / YQT[i + j * 8]);
-        }
-    }
-
-    float reapplyQuant[8][8];
-    for (i = 0; i < 8; i++)
-    {
-        for (j = 0; j < 8; j++)
-        {
-            reapplyQuant[i][j] = quant[i][j] * YQT[i + j * 8];
+            Input[i][j] = round(dct[i][j] / YQT[i + j * 8]) * YQT[i + j * 8];
         }
     }
 
@@ -189,27 +181,41 @@ void DCT(in float Input[8][8], out float Output[8][8])
 
             for (u = 0; u < 8; u++)
                 for (v = 0; v < 8; v++)
-                    s += reapplyQuant[u][v] * cos((2 * i + 1) * u * PI / 16) *
+                    s += Input[u][v] * cos((2 * i + 1) * u * PI / 16) *
 					cos((2 * j + 1) * v * PI / 16) *
-					((u == 0) ? 1 / sqrt(2) : 1.) *
-					((v == 0) ? 1 / sqrt(2) : 1.);
+					((u == 0) ? 1 / SQRT2 : 1.) *
+					((v == 0) ? 1 / SQRT2 : 1.);
 
             Output[i][j] = s / 4;
             Output[i][j] += 127.0f;
 
         }
 }
-
-[numthreads(3, 1, 1)]
-void main(uint3 GTid : SV_GroupThreadID, uint3 DTid : SV_DispatchThreadID)
+cbuffer MOUSE : register(b0)
 {
-    uint quality = 100;
+    int2 gazePos;
+}
+
+
+[numthreads(1, 1, 1)]
+void main(uint3 DispatchThreadID : SV_DispatchThreadID,
+	uint3 GroupThreadID : SV_GroupThreadID,
+	uint3 GroupID : SV_GroupID,
+	uint GroupIndex : SV_GroupIndex)
+{
+     int2 coord = DispatchThreadID.xy;
+
+    coord.x *= 8;
+    coord.y *= 8;
+    
+    uint quality = (1.0f - (float(length(coord - gazePos) / 1800.0))) * 100.0f;
 
     quality = quality ? quality : 90;
     quality = quality < 1 ? 1 : quality > 100 ? 100 : quality;
     quality = quality < 50 ? 5000 / quality : 200 - quality * 2;
 
     int i, j;
+
     for (i = 0; i < 64; i++)
     {
         int yti = (YQT[i] * quality + 50) / 100;
@@ -217,14 +223,10 @@ void main(uint3 GTid : SV_GroupThreadID, uint3 DTid : SV_DispatchThreadID)
         YQT[i] = yti;
     }
 
-    float2 coord = DTid.xy;
-
-    coord.x *= 8;
-    coord.y *= 8;
+  
 
     float InputR[8][8];
-    float InputG[8][8];
-    float InputB[8][8];
+
     for (i = 0; i < 8; i++)
     {
         for (j = 0; j < 8; j++)
@@ -232,19 +234,15 @@ void main(uint3 GTid : SV_GroupThreadID, uint3 DTid : SV_DispatchThreadID)
             float2 finalCoord;
             finalCoord.x = coord.x + i;
             finalCoord.y = coord.y + j;
-            InputR[i][j] = (color2[finalCoord].r * 255.0f);
-            InputG[i][j] = (color2[finalCoord].g * 255.0f);
-            InputB[i][j] = (color2[finalCoord].b * 255.0f);
+            InputR[i][j] = (color2[finalCoord][GroupThreadID.x] * 255.0f);
+
             
         }
 
     }
     float OutputR[8][8];
-    float OutputG[8][8];
-    float OutputB[8][8];
+   
     DCT(InputR, OutputR);
-    DCT(InputG, OutputG);
-    DCT(InputB, OutputB);
 
     for (i = 0; i < 8; i++)
     {
@@ -253,9 +251,11 @@ void main(uint3 GTid : SV_GroupThreadID, uint3 DTid : SV_DispatchThreadID)
             float2 finalCoord;
             finalCoord.x = coord.x + i;
             finalCoord.y = coord.y + j;
-            color[finalCoord] = float4(OutputR[i][j] / 255.0f,
-            OutputG[i][j] / 255.0f,
-            OutputB[i][j] / 255.0f, 1.0f);
+          
+            float fC = OutputR[i][j] / 255.0f;
+            
+      
+            color[finalCoord] = float4(fC, fC, fC, 1.0f);
             
         }
 

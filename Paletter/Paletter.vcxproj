@@ -169,6 +169,7 @@
   <ItemGroup>
     <ClInclude Include="Color24.h" />
     <ClInclude Include="Color32.h" />
+    <ClInclude Include="Input.h" />
     <ClInclude Include="pch.h" />
     <ClInclude Include="ScopedTimer.h" />
     <ClInclude Include="stb_image.h" />
@@ -179,6 +180,7 @@
   <ItemGroup>
     <ClCompile Include="Color24.cpp" />
     <ClCompile Include="Color32.cpp" />
+    <ClCompile Include="Input.cpp" />
     <ClCompile Include="Paletter.cpp" />
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>

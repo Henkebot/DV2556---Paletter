@@ -3,7 +3,11 @@
 
 #include "pch.h"
 #include "Window.h"
+#include "Input.h"
 #include "ScopedTimer.h"
+#include <tobii/tobii.h>
+#include <tobii/tobii_streams.h>
+#include <assert.h>
 #define VERBOSE
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -127,49 +131,51 @@ static const double A[] = {
 // DCT type II, scaled. Algorithm by Arai, Agui, Nakajima, 1988.
 // See: https://web.stanford.edu/class/ee398a/handouts/lectures/07-TransformCoding.pdf#page=30
 void transform(float vector[8]) {
-	const float v0 = vector[0] + vector[7];
-	const float v1 = vector[1] + vector[6];
-	const float v2 = vector[2] + vector[5];
-	const float v3 = vector[3] + vector[4];
-	const float v4 = vector[3] - vector[4];
-	const float v5 = vector[2] - vector[5];
-	const float v6 = vector[1] - vector[6];
-	const float v7 = vector[0] - vector[7];
+	float d0 = vector[0], d1 = vector[1], d2 = vector[2], d3 = vector[3], d4 = vector[4], d5 = vector[5], d6 = vector[6], d7 = vector[7];
+	float z1, z2, z3, z4, z5, z11, z13;
 
-	const float v8 = v0 + v3;
-	const float v9 = v1 + v2;
-	const float v10 = v1 - v2;
-	const float v11 = v0 - v3;
-	const float v12 = -v4 - v5;
-	const float v13 = (v5 + v6) * A[3];
-	const float v14 = v6 + v7;
+	float tmp0 = d0 + d7;
+	float tmp7 = d0 - d7;
+	float tmp1 = d1 + d6;
+	float tmp6 = d1 - d6;
+	float tmp2 = d2 + d5;
+	float tmp5 = d2 - d5;
+	float tmp3 = d3 + d4;
+	float tmp4 = d3 - d4;
 
-	const float v15 = v8 + v9;
-	const float v16 = v8 - v9;
-	const float v17 = (v10 + v11) * A[1];
-	const float v18 = (v12 + v14) * A[5];
+	// Even part
+	float tmp10 = tmp0 + tmp3;   // phase 2
+	float tmp13 = tmp0 - tmp3;
+	float tmp11 = tmp1 + tmp2;
+	float tmp12 = tmp1 - tmp2;
 
-	const float v19 = -v12 * A[2] - v18;
-	const float v20 = v14 * A[4] - v18;
+	d0 = tmp10 + tmp11;       // phase 3
+	d4 = tmp10 - tmp11;
 
-	const float v21 = v17 + v11;
-	const float v22 = v11 - v17;
-	const float v23 = v13 + v7;
-	const float v24 = v7 - v13;
+	z1 = (tmp12 + tmp13) * 0.707106781f; // c4
+	d2 = tmp13 + z1;       // phase 5
+	d6 = tmp13 - z1;
 
-	const float v25 = v19 + v24;
-	const float v26 = v23 + v20;
-	const float v27 = v23 - v20;
-	const float v28 = v24 - v19;
+	// Odd part
+	tmp10 = tmp4 + tmp5;       // phase 2
+	tmp11 = tmp5 + tmp6;
+	tmp12 = tmp6 + tmp7;
 
-	vector[0] = S[0] * v15;
-	vector[1] = S[1] * v26;
-	vector[2] = S[2] * v21;
-	vector[3] = S[3] * v28;
-	vector[4] = S[4] * v16;
-	vector[5] = S[5] * v25;
-	vector[6] = S[6] * v22;
-	vector[7] = S[7] * v27;
+	// The rotator is modified from fig 4-8 to avoid extra negations.
+	z5 = (tmp10 - tmp12) * 0.382683433f; // c6
+	z2 = tmp10 * 0.541196100f + z5; // c2-c6
+	z4 = tmp12 * 1.306562965f + z5; // c2+c6
+	z3 = tmp11 * 0.707106781f; // c4
+
+	z11 = tmp7 + z3;      // phase 5
+	z13 = tmp7 - z3;
+
+	vector[5] = z13 + z2;         // phase 6
+	vector[3] = z13 - z2;
+	vector[1] = z11 + z4;
+	vector[7] = z11 - z4;
+
+	vector[0] = d0;  vector[2] = d2;  vector[4] = d4; vector[6] = d6;
 }
 
 void CompressBlock(float in[8][8], float out[8][8])
@@ -230,7 +236,12 @@ void CompressBlock(float in[8][8], float out[8][8])
 		}
 		printf("\n");
 	}
-
+	for (int i = 0; i < 8; i++) {
+		for (int j = 0; j < 8; j++) {
+			in[i][j] -= 127.0f;
+		}
+		printf("\n");
+	}
 	printf("After2\n");
 	for (int i = 0; i < 8; i++) {
 		transform(in[i]);
@@ -330,12 +341,33 @@ ComPtr<ID3D12Resource> gInputImageUpload;
 ComPtr<ID3D12Resource> gWrittableRes;
 
 constexpr int TABLE_SIZE = 256 * 256;
+int gazePoint[2];
+void gazePointCallback(tobii_gaze_point_t const * pPoint, void* userData)
+{
+	if (pPoint->validity == TOBII_VALIDITY_VALID)
+	{
+		gazePoint[0] = pPoint->position_xy[0] * 1600.0f;
+		gazePoint[1] = pPoint->position_xy[1] * 900.0f;
+
+	}
+}
+
+static void urlReciever(char const* pUrl, void* pUserData)
+{
+	char* buffer = (char*)pUserData;
+	if (*buffer != '\0') return;
+
+	if (strlen(pUrl) < 256)
+		strcpy_s(buffer, 256, pUrl);
+}
+
+
 int main()
 {
 
 	int width, height, comp;
 	//Color24* data = reinterpret_cast<Color24*>(stbi_load("Images/lol1.jpg", &width, &height, &comp, 0));
-	stbi_uc* data = (stbi_load("Images/test1.png", &width, &height, &comp, 4));
+	stbi_uc* data = (stbi_load("Images/test3.png", &width, &height, &comp, 4));
 	comp = 4; // Force comp = 4
 
 	Window window(VideoMode(width, height), L"JPEG Eye Tracking");
@@ -362,7 +394,7 @@ int main()
 			DXGI_ERROR_NOT_FOUND != pFactory->EnumAdapters1(adapterIndex, &pAdapter);
 			++adapterIndex)
 		{
-			//if (adapterIndex == 0) continue;
+			if (adapterIndex == 0) continue;
 			DXGI_ADAPTER_DESC1 desc;
 			pAdapter->GetDesc1(&desc);
 			printf("%ls\n", desc.Description);
@@ -429,11 +461,12 @@ int main()
 
 
 		DXGI_SWAP_CHAIN_DESC1 sd = {};
+		
 		sd.BufferCount = NUM_BACK_BUFFERS;
 		sd.Width = width;
 		sd.Height = height;
 		sd.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-		sd.Flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
+		sd.Flags = 0;
 		sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
 		sd.SampleDesc.Count = 1;
 		sd.SampleDesc.Quality = 0;
@@ -444,8 +477,6 @@ int main()
 
 
 		ComPtr<IDXGISwapChain1> swapChain1;
-
-
 		TIF(pFactory->CreateSwapChainForHwnd(
 			gDirectQueue.Get(), window.getHandle(), &sd, nullptr, nullptr, &swapChain1));
 		TIF(swapChain1->QueryInterface(IID_PPV_ARGS(&gSwapChain)));
@@ -454,8 +485,6 @@ int main()
 
 		gSwapChain->SetMaximumFrameLatency(NUM_BACK_BUFFERS);
 
-		HANDLE m_hSwapChainWait = gSwapChain->GetFrameLatencyWaitableObject();
-		assert(m_hSwapChainWait != nullptr);
 
 		for (UINT i = 0; i < NUM_BACK_BUFFERS; i++)
 		{
@@ -699,7 +728,7 @@ int main()
 		ranges[0].Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DATA_VOLATILE;
 		ranges[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
-		D3D12_ROOT_PARAMETER1 rootParameters[2];
+		D3D12_ROOT_PARAMETER1 rootParameters[3];
 		rootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
 		rootParameters[0].DescriptorTable.NumDescriptorRanges = 1;
 		rootParameters[0].DescriptorTable.pDescriptorRanges = &ranges[0];
@@ -709,6 +738,12 @@ int main()
 		rootParameters[1].DescriptorTable.NumDescriptorRanges = 1;
 		rootParameters[1].DescriptorTable.pDescriptorRanges = &ranges[1];
 		rootParameters[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+		rootParameters[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+		rootParameters[2].Constants.Num32BitValues = 2;
+		rootParameters[2].Constants.RegisterSpace = 0;
+		rootParameters[2].Constants.ShaderRegister = 0;
+		rootParameters[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
 		D3D12_VERSIONED_ROOT_SIGNATURE_DESC rootSig;
 		rootSig.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
@@ -769,10 +804,31 @@ int main()
 	}
 	gComputeFenceValue++;
 
+	tobii_api_t* pApi;
+	tobii_error_t error = tobii_api_create(&pApi, NULL, NULL);
+	assert(error == TOBII_ERROR_NO_ERROR);
+
+	char url[256] = {};
+	error = tobii_enumerate_local_device_urls(pApi, urlReciever, url);
+	assert(error == TOBII_ERROR_NO_ERROR && *url != '\0');
+
+	tobii_device_t* pDevice;
+	error = tobii_device_create(pApi, url, &pDevice);
+	assert(error == TOBII_ERROR_NO_ERROR);
+
+	error = tobii_gaze_point_subscribe(pDevice, gazePointCallback, 0);
+	assert(error == TOBII_ERROR_NO_ERROR);
+
 	while (window.isOpen())
 	{
 		ScopedTimer timer("Render");
 		window.pollEvents();
+
+		error = tobii_wait_for_callbacks(NULL, 1, &pDevice);
+		assert(error == TOBII_ERROR_NO_ERROR || error == TOBII_ERROR_TIMED_OUT);
+
+		error = tobii_device_process_callbacks(pDevice);
+		assert(error == TOBII_ERROR_NO_ERROR);
 
 		TIF(gComputeAllocator->Reset());
 		gComputeList->Reset(gComputeAllocator.Get(), gComputePipeline.Get());
@@ -798,7 +854,10 @@ int main()
 		gComputeList->SetComputeRootDescriptorTable(0, h);
 		h.ptr += gDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 		gComputeList->SetComputeRootDescriptorTable(1, h);
-		gComputeList->Dispatch((width / 8), (height / 8) , 1);
+
+		//printf("Gaze Point(%i,%i)\n", gazePoint[0], gazePoint[1]);
+		gComputeList->SetComputeRoot32BitConstants(2, 2, reinterpret_cast<const LPVOID>(&gazePoint), 0);
+		gComputeList->Dispatch((width / 8), (height / 8), 1);
 		//gComputeList->Dispatch(width, height, 1);
 
 		{
@@ -879,7 +938,10 @@ int main()
 
 	}
 
-	
+	tobii_gaze_point_unsubscribe(pDevice);
+	tobii_device_destroy(pDevice);
+	tobii_api_destroy(pApi);
+
 	std::vector<ColorCount> colorCounter;
 	Color24 colorTable[TABLE_SIZE];
 

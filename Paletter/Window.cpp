@@ -10,7 +10,9 @@ Window::Window(const VideoMode& _mode, const wchar_t* _title)
 	: m_running(true)
 	, m_fullscreenMode(false)
 {
-	assert(registerWindowClass() && "Register window class");
+	registerWindowClass();
+	
+	
 
 	HDC screenDC = GetDC(NULL);
 	int left	 = (GetDeviceCaps(screenDC, HORZRES) - static_cast<int>(_mode.GetWidth())) >> 1;
@@ -37,6 +39,9 @@ Window::Window(const VideoMode& _mode, const wchar_t* _title)
 							 NULL,
 							 GetModuleHandle(NULL),
 							 this);
+	
+	assert(m_handle != NULL);
+	std::cout << "ERROR: " << GetLastError();
 
 	setSize(width, height);
 
@@ -122,7 +127,7 @@ void Window::SetWindowSizeCallback(std::function<void(int, int, bool)> _func)
 ////////////////////////////////////////////////////
 bool Window::registerWindowClass()
 {
-	WNDCLASSW windowClass;
+	WNDCLASSW windowClass = {};
 	windowClass.style		  = 0;
 	windowClass.lpfnWndProc   = &Window::preWinProc;
 	windowClass.cbClsExtra	= 0;
