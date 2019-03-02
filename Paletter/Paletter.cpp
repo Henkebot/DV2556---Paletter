@@ -128,10 +128,8 @@ static const double A[] = {
 };
 
 
-// DCT type II, scaled. Algorithm by Arai, Agui, Nakajima, 1988.
-// See: https://web.stanford.edu/class/ee398a/handouts/lectures/07-TransformCoding.pdf#page=30
-void transform(float vector[8]) {
-	float d0 = vector[0], d1 = vector[1], d2 = vector[2], d3 = vector[3], d4 = vector[4], d5 = vector[5], d6 = vector[6], d7 = vector[7];
+static void transform(float *d0p, float *d1p, float *d2p, float *d3p, float *d4p, float *d5p, float *d6p, float *d7p) {
+	float d0 = *d0p, d1 = *d1p, d2 = *d2p, d3 = *d3p, d4 = *d4p, d5 = *d5p, d6 = *d6p, d7 = *d7p;
 	float z1, z2, z3, z4, z5, z11, z13;
 
 	float tmp0 = d0 + d7;
@@ -170,17 +168,67 @@ void transform(float vector[8]) {
 	z11 = tmp7 + z3;      // phase 5
 	z13 = tmp7 - z3;
 
-	vector[5] = z13 + z2;         // phase 6
-	vector[3] = z13 - z2;
-	vector[1] = z11 + z4;
-	vector[7] = z11 - z4;
+	*d5p = z13 + z2;         // phase 6
+	*d3p = z13 - z2;
+	*d1p = z11 + z4;
+	*d7p = z11 - z4;
 
-	vector[0] = d0;  vector[2] = d2;  vector[4] = d4; vector[6] = d6;
+	*d0p = d0;  *d2p = d2;  *d4p = d4;  *d6p = d6;
+}
+
+void FastDct8_inverseTransform(float *d0p, float *d1p, float *d2p, float *d3p, float *d4p, float *d5p, float *d6p, float *d7p) {
+	float d0 = *d0p, d1 = *d1p, d2 = *d2p, d3 = *d3p, d4 = *d4p, d5 = *d5p, d6 = *d6p, d7 = *d7p;
+	const double v15 = d0 / S[0];
+	const double v26 = d1 / S[1];
+	const double v21 = d2 / S[2];
+	const double v28 = d3 / S[3];
+	const double v16 = d4 / S[4];
+	const double v25 = d5 / S[5];
+	const double v22 = d6 / S[6];
+	const double v27 = d7 / S[7];
+
+	const double v19 = (v25 - v28) / 2;
+	const double v20 = (v26 - v27) / 2;
+	const double v23 = (v26 + v27) / 2;
+	const double v24 = (v25 + v28) / 2;
+
+	const double v7 = (v23 + v24) / 2;
+	const double v11 = (v21 + v22) / 2;
+	const double v13 = (v23 - v24) / 2;
+	const double v17 = (v21 - v22) / 2;
+
+	const double v8 = (v15 + v16) / 2;
+	const double v9 = (v15 - v16) / 2;
+
+	const double v18 = (v19 - v20) * A[5];  // Different from original
+	const double v12 = (v19 * A[4] - v18) / (A[2] * A[5] - A[2] * A[4] - A[4] * A[5]);
+	const double v14 = (v18 - v20 * A[2]) / (A[2] * A[5] - A[2] * A[4] - A[4] * A[5]);
+
+	const double v6 = v14 - v7;
+	const double v5 = v13 / A[3] - v6;
+	const double v4 = -v5 - v12;
+	const double v10 = v17 / A[1] - v11;
+
+	const double v0 = (v8 + v11) / 2;
+	const double v1 = (v9 + v10) / 2;
+	const double v2 = (v9 - v10) / 2;
+	const double v3 = (v8 - v11) / 2;
+
+	*d0p = (v0 + v7) / 2;
+	*d1p = (v1 + v6) / 2;
+	*d2p = (v2 + v5) / 2;
+	*d3p = (v3 + v4) / 2;
+	*d4p = (v3 - v4) / 2;
+	*d5p = (v2 - v5) / 2;
+	*d6p = (v1 - v6) / 2;
+	*d7p = (v0 - v7) / 2;
 }
 
 void CompressBlock(float in[8][8], float out[8][8])
 {
-
+	for (int i = 0; i < 8; i++)
+		for (int j = 0; j < 8; j++)
+			in[i][j] = 255.0f;
 	float dct[8][8];
 
 	float ci, cj, dct1, sum;
@@ -236,23 +284,48 @@ void CompressBlock(float in[8][8], float out[8][8])
 		}
 		printf("\n");
 	}
-	for (int i = 0; i < 8; i++) {
-		for (int j = 0; j < 8; j++) {
-			in[i][j] -= 127.0f;
-		}
-		printf("\n");
-	}
-	printf("After2\n");
-	for (int i = 0; i < 8; i++) {
-		transform(in[i]);
-		for (int j = 0; j < 8; j++) {
-			printf("%f\t", in[i][j]);
-		}
-		printf("\n");
-	}
+
 #endif
+	float t0[64];
+
+	for (int i = 0; i < 8; i++)
+	{
+		for (int j = 0; j < 8; j++)
+		{
+
+			t0[i * 8 + j] = in[i][j] - 127.0f;
+		}
+	}
 
 
+	for (int dataOff = 0; dataOff < 64; dataOff += 8) {
+		transform(&t0[dataOff], &t0[dataOff + 1], &t0[dataOff + 2], &t0[dataOff + 3], &t0[dataOff + 4], &t0[dataOff + 5], &t0[dataOff + 6], &t0[dataOff + 7]);
+	}
+	// DCT columns
+	for (int dataOff = 0; dataOff < 8; ++dataOff) {
+		transform(&t0[dataOff], &t0[dataOff + 8], &t0[dataOff + 16], &t0[dataOff + 24], &t0[dataOff + 32], &t0[dataOff + 40], &t0[dataOff + 48], &t0[dataOff + 56]);
+	}
+	for (int i = 0; i < 64; i++)
+	{
+		if (i % 8 == 0)printf("\n");
+		printf("%f ", t0[i])
+			;
+	}
+
+	for (int dataOff = 0; dataOff < 64; dataOff += 8) {
+		FastDct8_inverseTransform(&t0[dataOff], &t0[dataOff + 1], &t0[dataOff + 2], &t0[dataOff + 3], &t0[dataOff + 4], &t0[dataOff + 5], &t0[dataOff + 6], &t0[dataOff + 7]);
+	}
+	// DCT columns
+	for (int dataOff = 0; dataOff < 8; ++dataOff) {
+		FastDct8_inverseTransform(&t0[dataOff], &t0[dataOff + 8], &t0[dataOff + 16], &t0[dataOff + 24], &t0[dataOff + 32], &t0[dataOff + 40], &t0[dataOff + 48], &t0[dataOff + 56]);
+	}
+	printf("\n");
+	for (int i = 0; i < 64; i++)
+	{
+		if (i % 8 == 0)printf("\n");
+		printf("%f ", t0[i])
+			;
+	}
 	float quant[8][8];
 	for (int i = 0; i < 8; i++)
 	{
@@ -337,6 +410,12 @@ UINT gFrameIndex = 0;
 ComPtr<ID3D12DescriptorHeap> gSRVHeap;
 ComPtr<ID3D12Resource> gInputImageRes;
 ComPtr<ID3D12Resource> gInputImageUpload;
+
+ComPtr<ID3D12Resource> gDCT_Matrix_Res;
+ComPtr<ID3D12Resource> gDCT_Matrix_Upload;
+
+ComPtr<ID3D12Resource> gDCT_Matrix_Transpose_Res;
+ComPtr<ID3D12Resource> gDCT_Matrix_Transpose_Upload;
 
 ComPtr<ID3D12Resource> gWrittableRes;
 
@@ -461,7 +540,7 @@ int main()
 
 
 		DXGI_SWAP_CHAIN_DESC1 sd = {};
-		
+
 		sd.BufferCount = NUM_BACK_BUFFERS;
 		sd.Width = width;
 		sd.Height = height;
@@ -515,157 +594,158 @@ int main()
 	// SRV and UAV
 	{
 
-
-
-		D3D12_RESOURCE_DESC textureDesc = {};
-		textureDesc.MipLevels = 1;
-		textureDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-		textureDesc.Width = width;
-		textureDesc.Height = height;
-		textureDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
-		textureDesc.DepthOrArraySize = 1;
-		textureDesc.SampleDesc.Count = 1;
-		textureDesc.SampleDesc.Quality = 0;
-		textureDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-
-		D3D12_HEAP_PROPERTIES heapProp = {};
-		heapProp.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
-		heapProp.CreationNodeMask = 1;
-		heapProp.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
-		heapProp.Type = D3D12_HEAP_TYPE_DEFAULT;
-		heapProp.VisibleNodeMask = 1;
-
-		TIF(
-			gDevice->CreateCommittedResource(&heapProp,
-				D3D12_HEAP_FLAG_NONE,
-				&textureDesc,
-				D3D12_RESOURCE_STATE_COPY_DEST,
-				nullptr,
-				IID_PPV_ARGS(&gInputImageRes)));
-
-
-		// Get the size needed for this texture buffer
-		UINT64 uploadBufferSize;
-		gDevice->GetCopyableFootprints(&gInputImageRes->GetDesc(), 0, 1, 0, nullptr, nullptr, nullptr, &uploadBufferSize);
-
-		// This is the GPU upload buffer.
-		D3D12_HEAP_PROPERTIES heapProp2 = {};
-		heapProp2.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
-		heapProp2.CreationNodeMask = 1;
-		heapProp2.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
-		heapProp2.Type = D3D12_HEAP_TYPE_UPLOAD;
-		heapProp2.VisibleNodeMask = 1;
-
-		{
-
-			D3D12_RESOURCE_DESC resDesc = {};
-			resDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-			resDesc.Alignment = 0;
-			resDesc.Format = DXGI_FORMAT_UNKNOWN;
-			resDesc.DepthOrArraySize = 1;
-			resDesc.Height = 1;
-			resDesc.Width = uploadBufferSize;
-			resDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
-			resDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-			resDesc.MipLevels = 1;
-			resDesc.SampleDesc.Count = 1;
-
-			TIF(
-				gDevice->CreateCommittedResource(&heapProp2,
-					D3D12_HEAP_FLAG_NONE,
-					&resDesc,
-					D3D12_RESOURCE_STATE_GENERIC_READ,
-					nullptr,
-					IID_PPV_ARGS(&gInputImageUpload)));
-		}
-
-		// This is the texture data.
-
-
-		// Now do we copy the data to the heap we created in this scope and then schedule a copy
-		// from this "upload heap" to the real texture 2d?
-
-		D3D12_SUBRESOURCE_DATA textureData = {};
-		textureData.pData = data;
-		textureData.RowPitch = width * comp;
-		textureData.SlicePitch = textureData.RowPitch * height;
-
-		UINT64 requiredSize = 0;
-		D3D12_PLACED_SUBRESOURCE_FOOTPRINT layouts;
-		UINT NumRows;
-		UINT64 RowSizeInBytes;
-
-		D3D12_RESOURCE_DESC resDesc = gInputImageRes->GetDesc();
-		gDevice->GetCopyableFootprints(&resDesc, 0, 1, 0, &layouts, &NumRows, &RowSizeInBytes, &requiredSize);
-
-		BYTE* pData;
-		TIF(gInputImageUpload->Map(0, nullptr, reinterpret_cast<LPVOID*>(&pData)));
-
-		memcpy(pData, data, width * height * comp);
-
-		gInputImageUpload->Unmap(0, nullptr);
-
-		D3D12_TEXTURE_COPY_LOCATION texture0 = {};
-		texture0.pResource = gInputImageRes.Get();
-		texture0.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-		texture0.SubresourceIndex = 0;
-
-		D3D12_TEXTURE_COPY_LOCATION texture1 = {};
-		texture1.pResource = gInputImageUpload.Get();
-		texture1.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-		texture1.PlacedFootprint = layouts;
-
-		gDirectList->CopyTextureRegion(&texture0, 0, 0, 0, &texture1, nullptr);
-
-		D3D12_RESOURCE_BARRIER barrier;
-		barrier.Transition.pResource = gInputImageRes.Get();
-		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
-		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
-		barrier.Transition.Subresource = 0;
-		barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-		gDirectList->ResourceBarrier(1, &barrier);
-
-		gDirectList->Close();
-
-		{
-			ID3D12CommandList* listsToExceute[] = { gDirectList.Get() };
-			gDirectQueue->ExecuteCommandLists(1, listsToExceute);
-		}
-
-		gDirectQueue->Signal(gDirectFence.Get(), gDirectFenceValue);
-		if (gDirectFenceValue > gDirectFence->GetCompletedValue())
-		{
-			gDirectFence->SetEventOnCompletion(gDirectFenceValue, gDirectEventHandle);
-			WaitForMultipleObjects(1, &gDirectEventHandle, TRUE, INFINITE);
-		}
-		gDirectFenceValue++;
-
 		D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
 		srvHeapDesc.NumDescriptors =
-			2; // One for UAV and one for SRV
+			2 + 2; // One for UAV and one for SRV + 2 for DCT_Matrix and DCT_Matrix_Transpose
 		srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 		srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 
 		TIF(
 			gDevice->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&gSRVHeap)));
 
-		// Describe and create a SRV for the texture.
-		D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-		srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-		srvDesc.Format = textureDesc.Format;
-		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-		srvDesc.Texture2D.MipLevels = 1;
-		auto handle2 = gSRVHeap->GetCPUDescriptorHandleForHeapStart();
-		handle2.ptr += gDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-		gDevice->CreateShaderResourceView(
-			gInputImageRes.Get(), &srvDesc, handle2);
-
-
-
-
+		// Texture used
 		{
-			// Create the output resource. The dimensions and format should match the swap-chain
+
+
+			D3D12_RESOURCE_DESC textureDesc = {};
+			textureDesc.MipLevels = 1;
+			textureDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+			textureDesc.Width = width;
+			textureDesc.Height = height;
+			textureDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+			textureDesc.DepthOrArraySize = 1;
+			textureDesc.SampleDesc.Count = 1;
+			textureDesc.SampleDesc.Quality = 0;
+			textureDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+
+			D3D12_HEAP_PROPERTIES heapProp = {};
+			heapProp.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+			heapProp.CreationNodeMask = 1;
+			heapProp.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+			heapProp.Type = D3D12_HEAP_TYPE_DEFAULT;
+			heapProp.VisibleNodeMask = 1;
+
+			TIF(
+				gDevice->CreateCommittedResource(&heapProp,
+					D3D12_HEAP_FLAG_NONE,
+					&textureDesc,
+					D3D12_RESOURCE_STATE_COPY_DEST,
+					nullptr,
+					IID_PPV_ARGS(&gInputImageRes)));
+
+
+			// Get the size needed for this texture buffer
+			UINT64 uploadBufferSize;
+			gDevice->GetCopyableFootprints(&gInputImageRes->GetDesc(), 0, 1, 0, nullptr, nullptr, nullptr, &uploadBufferSize);
+
+			// This is the GPU upload buffer.
+			D3D12_HEAP_PROPERTIES heapProp2 = {};
+			heapProp2.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+			heapProp2.CreationNodeMask = 1;
+			heapProp2.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+			heapProp2.Type = D3D12_HEAP_TYPE_UPLOAD;
+			heapProp2.VisibleNodeMask = 1;
+
+			{
+
+				D3D12_RESOURCE_DESC resDesc = {};
+				resDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+				resDesc.Alignment = 0;
+				resDesc.Format = DXGI_FORMAT_UNKNOWN;
+				resDesc.DepthOrArraySize = 1;
+				resDesc.Height = 1;
+				resDesc.Width = uploadBufferSize;
+				resDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+				resDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+				resDesc.MipLevels = 1;
+				resDesc.SampleDesc.Count = 1;
+
+				TIF(
+					gDevice->CreateCommittedResource(&heapProp2,
+						D3D12_HEAP_FLAG_NONE,
+						&resDesc,
+						D3D12_RESOURCE_STATE_GENERIC_READ,
+						nullptr,
+						IID_PPV_ARGS(&gInputImageUpload)));
+			}
+
+			// This is the texture data.
+
+
+			// Now do we copy the data to the heap we created in this scope and then schedule a copy
+			// from this "upload heap" to the real texture 2d?
+
+			D3D12_SUBRESOURCE_DATA textureData = {};
+			textureData.pData = data;
+			textureData.RowPitch = width * comp;
+			textureData.SlicePitch = textureData.RowPitch * height;
+
+			UINT64 requiredSize = 0;
+			D3D12_PLACED_SUBRESOURCE_FOOTPRINT layouts;
+			UINT NumRows;
+			UINT64 RowSizeInBytes;
+
+			D3D12_RESOURCE_DESC resDesc = gInputImageRes->GetDesc();
+			gDevice->GetCopyableFootprints(&resDesc, 0, 1, 0, &layouts, &NumRows, &RowSizeInBytes, &requiredSize);
+
+			BYTE* pData;
+			TIF(gInputImageUpload->Map(0, nullptr, reinterpret_cast<LPVOID*>(&pData)));
+
+			memcpy(pData, data, width * height * comp);
+
+			gInputImageUpload->Unmap(0, nullptr);
+
+			D3D12_TEXTURE_COPY_LOCATION texture0 = {};
+			texture0.pResource = gInputImageRes.Get();
+			texture0.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+			texture0.SubresourceIndex = 0;
+
+			D3D12_TEXTURE_COPY_LOCATION texture1 = {};
+			texture1.pResource = gInputImageUpload.Get();
+			texture1.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+			texture1.PlacedFootprint = layouts;
+
+			gDirectList->CopyTextureRegion(&texture0, 0, 0, 0, &texture1, nullptr);
+
+			D3D12_RESOURCE_BARRIER barrier;
+			barrier.Transition.pResource = gInputImageRes.Get();
+			barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+			barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+			barrier.Transition.Subresource = 0;
+			barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+			barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+			gDirectList->ResourceBarrier(1, &barrier);
+
+			/*gDirectList->Close();
+
+			{
+				ID3D12CommandList* listsToExceute[] = { gDirectList.Get() };
+				gDirectQueue->ExecuteCommandLists(1, listsToExceute);
+			}
+
+			gDirectQueue->Signal(gDirectFence.Get(), gDirectFenceValue);
+			if (gDirectFenceValue > gDirectFence->GetCompletedValue())
+			{
+				gDirectFence->SetEventOnCompletion(gDirectFenceValue, gDirectEventHandle);
+				WaitForMultipleObjects(1, &gDirectEventHandle, TRUE, INFINITE);
+			}
+			gDirectFenceValue++;*/
+
+			// Describe and create a SRV for the texture.
+			D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+			srvDesc.Format = textureDesc.Format;
+			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+			srvDesc.Texture2D.MipLevels = 1;
+			auto handle2 = gSRVHeap->GetCPUDescriptorHandleForHeapStart();
+			handle2.ptr += gDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+			gDevice->CreateShaderResourceView(
+				gInputImageRes.Get(), &srvDesc, handle2);
+		}
+
+		// Create the output resource
+		{
+			//The dimensions and format should match the swap-chain
 			D3D12_RESOURCE_DESC resDesc = {};
 			resDesc.DepthOrArraySize = 1;
 			resDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
@@ -698,6 +778,275 @@ int main()
 
 		}
 
+		// Create the DCT_Matrix buffer
+		{
+			D3D12_RESOURCE_DESC textureDesc = {};
+			textureDesc.MipLevels = 1;
+			textureDesc.Format = DXGI_FORMAT_UNKNOWN;
+			textureDesc.Width = sizeof(float) * 64;
+			textureDesc.Height = 1;
+			textureDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+			textureDesc.DepthOrArraySize = 1;
+			textureDesc.SampleDesc.Count = 1;
+			textureDesc.SampleDesc.Quality = 0;
+			textureDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+			textureDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+			D3D12_HEAP_PROPERTIES heapProp = {};
+			heapProp.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+			heapProp.CreationNodeMask = 1;
+			heapProp.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+			heapProp.Type = D3D12_HEAP_TYPE_DEFAULT;
+			heapProp.VisibleNodeMask = 1;
+
+			TIF(
+				gDevice->CreateCommittedResource(&heapProp,
+					D3D12_HEAP_FLAG_NONE,
+					&textureDesc,
+					D3D12_RESOURCE_STATE_COPY_DEST,
+					nullptr,
+					IID_PPV_ARGS(&gDCT_Matrix_Res)));
+
+
+			// Get the size needed for this texture buffer
+			UINT64 uploadBufferSize;
+			gDevice->GetCopyableFootprints(&gDCT_Matrix_Res->GetDesc(), 0, 1, 0, nullptr, nullptr, nullptr, &uploadBufferSize);
+
+			// This is the GPU upload buffer.
+			D3D12_HEAP_PROPERTIES heapProp2 = {};
+			heapProp2.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+			heapProp2.CreationNodeMask = 1;
+			heapProp2.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+			heapProp2.Type = D3D12_HEAP_TYPE_UPLOAD;
+			heapProp2.VisibleNodeMask = 1;
+
+			{
+
+				D3D12_RESOURCE_DESC resDesc = {};
+				resDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+				resDesc.Alignment = 0;
+				resDesc.Format = DXGI_FORMAT_UNKNOWN;
+				resDesc.DepthOrArraySize = 1;
+				resDesc.Height = 1;
+				resDesc.Width = uploadBufferSize;
+				resDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+				resDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+				resDesc.MipLevels = 1;
+				resDesc.SampleDesc.Count = 1;
+
+				TIF(
+					gDevice->CreateCommittedResource(&heapProp2,
+						D3D12_HEAP_FLAG_NONE,
+						&resDesc,
+						D3D12_RESOURCE_STATE_GENERIC_READ,
+						nullptr,
+						IID_PPV_ARGS(&gDCT_Matrix_Upload)));
+			}
+
+			UINT64 requiredSize = 0;
+			D3D12_PLACED_SUBRESOURCE_FOOTPRINT layouts;
+			UINT NumRows;
+			UINT64 RowSizeInBytes;
+
+			D3D12_RESOURCE_DESC resDesc = gDCT_Matrix_Res->GetDesc();
+			gDevice->GetCopyableFootprints(&resDesc, 0, 1, 0, &layouts, &NumRows, &RowSizeInBytes, &requiredSize);
+
+			BYTE* pData;
+			TIF(gDCT_Matrix_Upload->Map(0, nullptr, reinterpret_cast<LPVOID*>(&pData)));
+
+			float DCT_MATRIX[64];
+			//compute dct matrix
+			for (int y = 0; y < 8; y++)
+				for (int x = 0; x < 8; x++)
+					if (0 == y)
+						DCT_MATRIX[y * 8 + x] = float(1.0 / sqrt(8.0));
+					else
+						DCT_MATRIX[y * 8 + x] = float(sqrt(2.0 / 8.0) * cos(((2 * x + 1)*DirectX::XM_PI*y) / (2.0 * 8.0)));
+
+			memcpy(pData, DCT_MATRIX, sizeof(float) * 64);
+
+			gDCT_Matrix_Upload->Unmap(0, nullptr);
+
+
+
+			gDirectList->CopyBufferRegion(gDCT_Matrix_Res.Get(), 0, gDCT_Matrix_Upload.Get(), layouts.Offset, layouts.Footprint.RowPitch);
+
+			D3D12_RESOURCE_BARRIER barrier;
+			barrier.Transition.pResource = gDCT_Matrix_Res.Get();
+			barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+			barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+			barrier.Transition.Subresource = 0;
+			barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+			barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+			gDirectList->ResourceBarrier(1, &barrier);
+
+		/*	gDirectList->Close();
+
+			{
+				ID3D12CommandList* listsToExceute[] = { gDirectList.Get() };
+				gDirectQueue->ExecuteCommandLists(1, listsToExceute);
+			}
+
+			gDirectQueue->Signal(gDirectFence.Get(), gDirectFenceValue);
+			if (gDirectFenceValue > gDirectFence->GetCompletedValue())
+			{
+				gDirectFence->SetEventOnCompletion(gDirectFenceValue, gDirectEventHandle);
+				WaitForMultipleObjects(1, &gDirectEventHandle, TRUE, INFINITE);
+			}
+			gDirectFenceValue++;*/
+
+			// Describe and create a SRV for the texture.
+			D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+			srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+			srvDesc.Buffer.FirstElement = 0;
+			srvDesc.Buffer.NumElements = 64;
+			srvDesc.Buffer.StructureByteStride = sizeof(float);
+			auto handle2 = gSRVHeap->GetCPUDescriptorHandleForHeapStart();
+			handle2.ptr += (gDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV) * 2);
+			gDevice->CreateShaderResourceView(
+				gDCT_Matrix_Res.Get(), &srvDesc, handle2);
+
+		}
+		// Create the DCT_Matrix_Transpose
+		{
+			D3D12_RESOURCE_DESC textureDesc = {};
+			textureDesc.MipLevels = 1;
+			textureDesc.Format = DXGI_FORMAT_UNKNOWN;
+			textureDesc.Width = sizeof(float) * 64;
+			textureDesc.Height = 1;
+			textureDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+			textureDesc.DepthOrArraySize = 1;
+			textureDesc.SampleDesc.Count = 1;
+			textureDesc.SampleDesc.Quality = 0;
+			textureDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+			textureDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+			D3D12_HEAP_PROPERTIES heapProp = {};
+			heapProp.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+			heapProp.CreationNodeMask = 1;
+			heapProp.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+			heapProp.Type = D3D12_HEAP_TYPE_DEFAULT;
+			heapProp.VisibleNodeMask = 1;
+
+			TIF(
+				gDevice->CreateCommittedResource(&heapProp,
+					D3D12_HEAP_FLAG_NONE,
+					&textureDesc,
+					D3D12_RESOURCE_STATE_COPY_DEST,
+					nullptr,
+					IID_PPV_ARGS(&gDCT_Matrix_Transpose_Res)));
+
+
+			// Get the size needed for this texture buffer
+			UINT64 uploadBufferSize;
+			gDevice->GetCopyableFootprints(&gDCT_Matrix_Transpose_Res->GetDesc(), 0, 1, 0, nullptr, nullptr, nullptr, &uploadBufferSize);
+
+			// This is the GPU upload buffer.
+			D3D12_HEAP_PROPERTIES heapProp2 = {};
+			heapProp2.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+			heapProp2.CreationNodeMask = 1;
+			heapProp2.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+			heapProp2.Type = D3D12_HEAP_TYPE_UPLOAD;
+			heapProp2.VisibleNodeMask = 1;
+
+			{
+
+				D3D12_RESOURCE_DESC resDesc = {};
+				resDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+				resDesc.Alignment = 0;
+				resDesc.Format = DXGI_FORMAT_UNKNOWN;
+				resDesc.DepthOrArraySize = 1;
+				resDesc.Height = 1;
+				resDesc.Width = uploadBufferSize;
+				resDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+				resDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+				resDesc.MipLevels = 1;
+				resDesc.SampleDesc.Count = 1;
+
+				TIF(
+					gDevice->CreateCommittedResource(&heapProp2,
+						D3D12_HEAP_FLAG_NONE,
+						&resDesc,
+						D3D12_RESOURCE_STATE_GENERIC_READ,
+						nullptr,
+						IID_PPV_ARGS(&gDCT_Matrix_Transpose_Upload)));
+			}
+
+			UINT64 requiredSize = 0;
+			D3D12_PLACED_SUBRESOURCE_FOOTPRINT layouts;
+			UINT NumRows;
+			UINT64 RowSizeInBytes;
+
+			D3D12_RESOURCE_DESC resDesc = gDCT_Matrix_Transpose_Res->GetDesc();
+			gDevice->GetCopyableFootprints(&resDesc, 0, 1, 0, &layouts, &NumRows, &RowSizeInBytes, &requiredSize);
+
+			BYTE* pData;
+			TIF(gDCT_Matrix_Transpose_Upload->Map(0, nullptr, reinterpret_cast<LPVOID*>(&pData)));
+
+			float DCT_MATRIX2[64];
+			float DCT_MATRIX_TRANSPOSE[64];
+			//compute dct matrix
+			for (int y = 0; y < 8; y++)
+				for (int x = 0; x < 8; x++)
+					if (0 == y)
+						DCT_MATRIX2[y * 8 + x] = float(1.0 / sqrt(8.0));
+					else
+						DCT_MATRIX2[y * 8 + x] = float(sqrt(2.0 / 8.0) * cos(((2 * x + 1)*DirectX::XM_PI*y) / (2.0 * 8.0)));
+
+			//compute dct transpose matrix
+			for (int y = 0; y < 8; y++)
+				for (int x = 0; x < 8; x++)
+					DCT_MATRIX_TRANSPOSE[y * 8 + x] = DCT_MATRIX2[x * 8 + y];
+
+			memcpy(pData, DCT_MATRIX_TRANSPOSE, sizeof(float) * 64);
+
+			gDCT_Matrix_Transpose_Upload->Unmap(0, nullptr);
+
+
+
+			gDirectList->CopyBufferRegion(gDCT_Matrix_Transpose_Res.Get(), 0, gDCT_Matrix_Transpose_Upload.Get(), layouts.Offset, layouts.Footprint.RowPitch);
+
+			D3D12_RESOURCE_BARRIER barrier;
+			barrier.Transition.pResource = gDCT_Matrix_Transpose_Res.Get();
+			barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+			barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+			barrier.Transition.Subresource = 0;
+			barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+			barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+			gDirectList->ResourceBarrier(1, &barrier);
+
+			gDirectList->Close();
+
+			{
+				ID3D12CommandList* listsToExceute[] = { gDirectList.Get() };
+				gDirectQueue->ExecuteCommandLists(1, listsToExceute);
+			}
+
+			gDirectQueue->Signal(gDirectFence.Get(), gDirectFenceValue);
+			if (gDirectFenceValue > gDirectFence->GetCompletedValue())
+			{
+				gDirectFence->SetEventOnCompletion(gDirectFenceValue, gDirectEventHandle);
+				WaitForMultipleObjects(1, &gDirectEventHandle, TRUE, INFINITE);
+			}
+			gDirectFenceValue++;
+
+			// Describe and create a SRV for the texture.
+			D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+			srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+			srvDesc.Buffer.FirstElement = 0;
+			srvDesc.Buffer.NumElements = 64;
+			srvDesc.Buffer.StructureByteStride = sizeof(float);
+			auto handle2 = gSRVHeap->GetCPUDescriptorHandleForHeapStart();
+			handle2.ptr += (gDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV) * 3);
+			gDevice->CreateShaderResourceView(
+				gDCT_Matrix_Transpose_Res.Get(), &srvDesc, handle2);
+
+		}
+
 
 
 
@@ -715,7 +1064,7 @@ int main()
 
 		D3D12_DESCRIPTOR_RANGE1 ranges[2];
 		ranges[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-		ranges[1].NumDescriptors = 1;
+		ranges[1].NumDescriptors = 3;
 		ranges[1].BaseShaderRegister = 0;
 		ranges[1].RegisterSpace = 0;
 		ranges[1].Flags = D3D12_DESCRIPTOR_RANGE_FLAG_NONE;
@@ -804,6 +1153,7 @@ int main()
 	}
 	gComputeFenceValue++;
 
+#ifdef TOBII
 	tobii_api_t* pApi;
 	tobii_error_t error = tobii_api_create(&pApi, NULL, NULL);
 	assert(error == TOBII_ERROR_NO_ERROR);
@@ -818,18 +1168,18 @@ int main()
 
 	error = tobii_gaze_point_subscribe(pDevice, gazePointCallback, 0);
 	assert(error == TOBII_ERROR_NO_ERROR);
-
+#endif
 	while (window.isOpen())
 	{
 		ScopedTimer timer("Render");
 		window.pollEvents();
-
+#ifdef TOBII
 		error = tobii_wait_for_callbacks(NULL, 1, &pDevice);
 		assert(error == TOBII_ERROR_NO_ERROR || error == TOBII_ERROR_TIMED_OUT);
 
 		error = tobii_device_process_callbacks(pDevice);
 		assert(error == TOBII_ERROR_NO_ERROR);
-
+#endif
 		TIF(gComputeAllocator->Reset());
 		gComputeList->Reset(gComputeAllocator.Get(), gComputePipeline.Get());
 
@@ -851,11 +1201,18 @@ int main()
 
 		// Run Compute 
 		auto h = gSRVHeap->GetGPUDescriptorHandleForHeapStart();
+		UINT size = gDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 		gComputeList->SetComputeRootDescriptorTable(0, h);
-		h.ptr += gDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+		h.ptr += size;
 		gComputeList->SetComputeRootDescriptorTable(1, h);
+	
 
 		//printf("Gaze Point(%i,%i)\n", gazePoint[0], gazePoint[1]);
+#ifndef TOBII
+		auto pos = Input::GetMousePosition();
+		gazePoint[0] = pos.x;
+		gazePoint[1] = pos.y;
+#endif
 		gComputeList->SetComputeRoot32BitConstants(2, 2, reinterpret_cast<const LPVOID>(&gazePoint), 0);
 		gComputeList->Dispatch((width / 8), (height / 8), 1);
 		//gComputeList->Dispatch(width, height, 1);
@@ -938,10 +1295,11 @@ int main()
 
 	}
 
+#ifdef TOBII
 	tobii_gaze_point_unsubscribe(pDevice);
 	tobii_device_destroy(pDevice);
 	tobii_api_destroy(pApi);
-
+#endif
 	std::vector<ColorCount> colorCounter;
 	Color24 colorTable[TABLE_SIZE];
 
