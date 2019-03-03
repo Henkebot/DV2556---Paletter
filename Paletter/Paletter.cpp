@@ -17,6 +17,17 @@
 
 #include "Color32.h"
 #include "Color24.h"
+#define TOBII
+
+/*
+
+	list->Dispatch(2,2,1);
+	
+	2*2*1 = 4
+	
+	DispatchThreadID
+
+	*/
 
 float clamp(float minV, float maxV, float val)
 {
@@ -446,7 +457,7 @@ int main()
 
 	int width, height, comp;
 	//Color24* data = reinterpret_cast<Color24*>(stbi_load("Images/lol1.jpg", &width, &height, &comp, 0));
-	stbi_uc* data = (stbi_load("Images/test3.png", &width, &height, &comp, 4));
+	stbi_uc* data = (stbi_load("Images/test1.png", &width, &height, &comp, 4));
 	comp = 4; // Force comp = 4
 
 	Window window(VideoMode(width, height), L"JPEG Eye Tracking");
@@ -456,14 +467,14 @@ int main()
 	{
 		ComPtr<ID3D12Debug> debugController;
 		UINT dxgiFactoryFlags = 0;
-		if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController))))
+		/*if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController))))
 		{
 			debugController->EnableDebugLayer();
 			dxgiFactoryFlags |= DXGI_CREATE_FACTORY_DEBUG;
 		}
 		ComPtr<ID3D12Debug1> debugcontroller1;
 		debugController->QueryInterface(IID_PPV_ARGS(&debugcontroller1));
-		debugcontroller1->SetEnableGPUBasedValidation(true);
+		debugcontroller1->SetEnableGPUBasedValidation(true);*/
 
 
 		ComPtr<IDXGIAdapter1> pAdapter;

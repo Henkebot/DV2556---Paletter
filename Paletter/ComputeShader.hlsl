@@ -25,6 +25,39 @@ cbuffer MOUSE : register(b0)
     int2 gazePos;
 }
 
+static float3x3 mYUV709n =
+{ // Normalized
+    0.2126, 0.7152, 0.0722,
+    -0.1145721060573399, -0.3854278939426601, 0.5,
+    0.5, -0.4541529083058166, -0.0458470916941834
+};
+float4 RGBtoYUV(float4 rgba)
+{
+    return float4(mul(mYUV709n, rgba.xyz), 1.0f) + float4(0, 0.5, 0.5, 0);
+    //return float4(
+    //    rgba.r * mYUV709n._m00 + rgba.g * mYUV709n._m01 + rgba.b * mYUV709n._m02,
+    //    rgba.r * mYUV709n._m10 + rgba.g * mYUV709n._m11 + rgba.b * mYUV709n._m12,
+    //    rgba.r * mYUV709n._m20 + rgba.g * mYUV709n._m21 + rgba.b * mYUV709n._m22,
+    //    rgba.a
+    //) + float4(0, 0.5, 0.5, 0);
+}
+
+static float3x3 mYUV709i =
+{ // Inverse Normalized
+    1, 0, 1.5748,
+    1, -0.187324, -0.468124,
+    1, 1.8556, 0
+};
+float4 YUVtoRGB(float4 yuva)
+{
+    yuva.gb -= 0.5;
+    return float4(mul(mYUV709i, yuva.rgb), yuva.a);
+    //return float4(
+    //    yuva.r * mYUV709i._m00 + yuva.g * mYUV709i._m01 + yuva.b * mYUV709i._m02,
+    //    yuva.r * mYUV709i._m10 + yuva.g * mYUV709i._m11 + yuva.b * mYUV709i._m12,
+    //    yuva.r * mYUV709i._m20 + yuva.g * mYUV709i._m21 + yuva.b * mYUV709i._m22,
+    //    yuva.a);
+}
 
 [numthreads(8, 8, 1)]
 void main(uint3 DispatchThreadID : SV_DispatchThreadID,
@@ -34,10 +67,13 @@ void main(uint3 DispatchThreadID : SV_DispatchThreadID,
 {
     int2 coord = GroupID.xy;
 
-    coord *= 8;
-    coord += GroupThreadID.xy;
-   
-    uint quality = ((float(length(coord - gazePos) / 1800.0))) * 100.0f;
+    coord <<= 3;
+    float quality = (1.0f - ((float(length(coord - gazePos) / (800.0)))));
+    //GroupMemoryBarrierWithGroupSync();
+    //color[coord] = float4(quality, 0, 0, 1.0f);
+   //return;
+    quality *= 100.0f;
+
 
     quality = quality ? quality : 90;
     quality = quality < 1 ? 1 : quality > 100 ? 100 : quality;
@@ -49,7 +85,10 @@ void main(uint3 DispatchThreadID : SV_DispatchThreadID,
     yti = (yti < 1 ? 1 : yti > 255 ? 255 : yti);
     YQT[GroupIndex] = yti;
     
-    Pixels[GroupIndex] = (color2[coord] * 255.0f) - 128.0f;
+    
+    coord += GroupThreadID.xy;
+    Pixels[GroupIndex] = (RGBtoYUV(color2[coord]) * 255.0f) - float4(128.0f, 128.0f, 128.0f, 0.0f);
+    
 
     GroupMemoryBarrierWithGroupSync();
 
@@ -113,17 +152,15 @@ void main(uint3 DispatchThreadID : SV_DispatchThreadID,
     Pixels[GroupIndex].r += 128.0f;
     Pixels[GroupIndex].g += 128.0f;
     Pixels[GroupIndex].b += 128.0f;
-
-    
+     
     Pixels[GroupIndex].r /= 255.0f;
     Pixels[GroupIndex].g /= 255.0f;
     Pixels[GroupIndex].b /= 255.0f;
-
+    Pixels[GroupIndex] = YUVtoRGB(Pixels[GroupIndex]);
   
     color[coord] = Pixels[GroupIndex];
     
-   
-    //Pixels[ GroupIndex];
+
             
  
     
