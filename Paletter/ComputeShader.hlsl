@@ -68,11 +68,11 @@ void main(uint3 DispatchThreadID : SV_DispatchThreadID,
     int2 coord = GroupID.xy;
 
     coord <<= 3;
-    float quality = (1.0f - ((float(length(coord - gazePos) / (800.0)))));
+    float quality = (1.0f - ((float(length(coord - gazePos) / (200.0f)))));
     //GroupMemoryBarrierWithGroupSync();
-    //color[coord] = float4(quality, 0, 0, 1.0f);
-   //return;
-    quality *= 100.0f;
+   /* color[DispatchThreadID.xy] = float4(quality, 0, 0, 1.0f);
+   return;*/
+    quality *= 70.0f;
 
 
     quality = quality ? quality : 90;
