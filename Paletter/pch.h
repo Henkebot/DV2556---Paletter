@@ -7,9 +7,17 @@
 #include <dxgi1_6.h> //Only used for initialization of the device and swap chain.
 using namespace DirectX;
 
+#include <d2d1_3.h>
+#include <d3d11.h>
+#include <d3d11on12.h>
+#include <dwrite.h>
+
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "DXGI.lib")
 #pragma comment(lib, "d3dcompiler.lib")
+#pragma comment(lib, "d3d11.lib")
+#pragma comment(lib, "d2d1.lib")
+#pragma comment(lib, "dwrite.lib")
 
 constexpr int NUM_BACKBUFFERS = 3;
 
@@ -33,7 +41,6 @@ using namespace Microsoft::WRL;
 #include <string>
 #include <vector>
 
-
 inline void TIF(HRESULT hr)
 {
 #ifdef _DEBUG
@@ -42,7 +49,7 @@ inline void TIF(HRESULT hr)
 		_com_error err(hr);
 		CHAR s_str[256] = {};
 		wprintf(L"%ls", err.ErrorMessage());
-		
+
 		throw std::runtime_error(s_str);
 	}
 #endif

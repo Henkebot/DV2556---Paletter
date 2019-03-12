@@ -170,6 +170,7 @@
     <ClInclude Include="Color24.h" />
     <ClInclude Include="Color32.h" />
     <ClInclude Include="Input.h" />
+    <ClInclude Include="Paletter.h" />
     <ClInclude Include="pch.h" />
     <ClInclude Include="ScopedTimer.h" />
     <ClInclude Include="stb_image.h" />
