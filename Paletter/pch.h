@@ -40,6 +40,7 @@ using namespace Microsoft::WRL;
 #include <iostream>
 #include <string>
 #include <vector>
+#include <fstream>
 
 inline void TIF(HRESULT hr)
 {

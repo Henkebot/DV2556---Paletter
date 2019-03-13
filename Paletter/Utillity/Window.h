@@ -1,6 +1,6 @@
 #pragma once
 #include "VideoMode.h"
-#include "pch.h"
+#include "../pch.h"
 class Window
 {
 public:

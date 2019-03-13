@@ -1,5 +1,5 @@
 #include "VideoMode.h"
-#include "pch.h"
+#include "../pch.h"
 
 ////////////////////////////////////////////////////
 VideoMode::VideoMode()

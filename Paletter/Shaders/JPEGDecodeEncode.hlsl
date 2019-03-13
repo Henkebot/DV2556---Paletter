@@ -26,6 +26,8 @@ groupshared int UVQT[] = {17, 18, 24, 47, 99, 99, 99, 99, 18, 21, 26, 66, 99, 99
 cbuffer MOUSE : register(b0)
 {
 	int2 gazePos;
+	float circleRatio;
+	int centerQuality;
 }
 
 static float3x3 mYUV709n = { // Normalized
@@ -70,11 +72,12 @@ float4 YUVtoRGB(float4 yuva)
 	coord <<= 3;
 	float d2 = (coord.x - gazePos.x) * (coord.x - gazePos.x) +
 			   (coord.y - gazePos.y) * (coord.y - gazePos.y);
-	float quality = (1.0f - ((float(d2 / (2200.0f * 2200.0f)))));
+	float d3	  = 2200.0f * circleRatio;
+	float quality = (1.0f - ((float(d2 / (d3 * d3)))));
 
 	/*color[DispatchThreadID.xy] = float4(quality, 0, 0, 1.0f);
 	return;*/
-	quality *= 100.0f;
+	quality *= centerQuality;
 
 	quality = quality ? quality : 90;
 	quality = quality < 1 ? 1 : quality > 100 ? 100 : quality;
@@ -139,11 +142,10 @@ float4 YUVtoRGB(float4 yuva)
 		Pixels[GroupIndex].rgb +=
 			DCT_MatrixTemp[GroupThreadID.y * 8 + k] * DCT_Matrix[k * 8 + GroupThreadID.x];
 	}
-	Pixels[GroupIndex].rgb += float3(128.0f,128.0f,128.0f);
-	
+	Pixels[GroupIndex].rgb += float3(128.0f, 128.0f, 128.0f);
 
-	Pixels[GroupIndex].rgb /= float3(256.0f,256.0f,256.0f);
-	
+	Pixels[GroupIndex].rgb /= float3(256.0f, 256.0f, 256.0f);
+
 	Pixels[GroupIndex] = YUVtoRGB(Pixels[GroupIndex]);
 
 	color[coord] = Pixels[GroupIndex];

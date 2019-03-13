@@ -1,16 +1,53 @@
 // Paletter.cpp : This file contains the 'main' function. Program execution begins and ends there.
 //
 
-#include "Input.h"
-#include "ScopedTimer.h"
-#include "Window.h"
+#include "Timers/Timer.h"
+#include "Utillity/Input.h"
+#include "Utillity/Window.h"
 #include "pch.h"
 
 constexpr int SCREEN_WIDTH  = 1920;
 constexpr int SCREEN_HEIGHT = 1080;
+#include "Constants.h"
+
+struct JPEG_SETTINGS
+{
+	float circleRatio;
+	int centerQuality;
+};
+
+JPEG_SETTINGS settings[] = {
+	// Circle tests
+	{1.0f, 100},
+	{0.75f, 100},
+	{0.50f, 100},
+	{0.30f, 100},
+
+	// Quality Tests
+	{1.0f, 80},
+	{1.0f, 60},
+	{1.0f, 40},
+	{1.0f, 20}};
+
+constexpr unsigned int MAX_STAGES = ARRAYSIZE(settings);
+
+int gResults[MAX_STAGES]; // Each index tells us what image was choosen
+
+enum class States
+{
+	INTRO,
+	FINISHED,
+	SELECTION,
+	PREPARE_JPEG,
+	PREPARE_RAW,
+	PRESENT_JPEG,
+	PRESENT_RAW
+};
+
+States gCurrentState = States::INTRO;
 
 // TOBII
-//#define TOBII //Uncomment for eye tracking
+#define TOBII //Uncomment for eye tracking
 #include <assert.h>
 #include <tobii/tobii.h>
 #include <tobii/tobii_streams.h>
@@ -22,11 +59,11 @@ int gGazePoint[2];
 
 // STB IMAGE
 #define STB_IMAGE_IMPLEMENTATION
-#include "stb_image.h"
+#include "Utillity/stb_image.h"
 #define STBI_MSC_SECURE_CRT
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "Paletter.h"
-#include "stb_image_write.h"
+#include "Utillity/stb_image_write.h"
 
 // DX11
 ComPtr<ID3D11DeviceContext> gDevice11Context;
@@ -63,7 +100,7 @@ ComPtr<ID3D12Fence> gComputeFence;
 HANDLE gComputeEventHandle;
 UINT64 gComputeFenceValue = 0;
 
-enum ROOT_CONSTANTS : UINT
+enum HEAP_LOCATIONS : UINT
 {
 	UAV_RESULT = 0,
 	SRV_TEXTURE,
@@ -350,6 +387,7 @@ int main()
 												 D3D12_RESOURCE_STATE_COPY_DEST,
 												 nullptr,
 												 IID_PPV_ARGS(&gInputImageRes)));
+			NAME_D3D12_OBJECT(gInputImageRes);
 
 			// Get the size needed for this texture buffer
 			UINT64 uploadBufferSize;
@@ -809,10 +847,10 @@ int main()
 		TIF(gD2DDeviceContext->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::AntiqueWhite),
 													 &gTextBrush));
 
-		TIF(gDWriteFactory->CreateTextFormat(L"BlackoakStd",
+		TIF(gDWriteFactory->CreateTextFormat(L"Verdana",
 											 nullptr,
 											 DWRITE_FONT_WEIGHT_NORMAL,
-											 DWRITE_FONT_STYLE_OBLIQUE,
+											 DWRITE_FONT_STYLE_NORMAL,
 											 DWRITE_FONT_STRETCH_NORMAL,
 											 45,
 											 L"en-us",
@@ -858,8 +896,9 @@ int main()
 		rootParameters[1].DescriptorTable.pDescriptorRanges   = &ranges[1];
 		rootParameters[1].ShaderVisibility					  = D3D12_SHADER_VISIBILITY_ALL;
 
-		rootParameters[2].ParameterType			   = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-		rootParameters[2].Constants.Num32BitValues = 2;
+		rootParameters[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+		rootParameters[2].Constants.Num32BitValues =
+			4; // two for gaze point, two for quality and circle ratio
 		rootParameters[2].Constants.RegisterSpace  = 0;
 		rootParameters[2].Constants.ShaderRegister = 0;
 		rootParameters[2].ShaderVisibility		   = D3D12_SHADER_VISIBILITY_ALL;
@@ -893,7 +932,7 @@ int main()
 	{
 		ComPtr<ID3DBlob> computeBlob;
 		ComPtr<ID3DBlob> errorPtr;
-		TIF(D3DCompileFromFile(L"Paletter/JPEGDecodeEncode.hlsl",
+		TIF(D3DCompileFromFile(L"Paletter/Shaders/JPEGDecodeEncode.hlsl",
 							   nullptr,
 							   nullptr,
 							   "main",
@@ -942,10 +981,16 @@ int main()
 	error = tobii_gaze_point_subscribe(pDevice, gazePointCallback, 0);
 	assert(error == TOBII_ERROR_NO_ERROR);
 #endif
+	Timer t;
+	float timeCounter		  = 0;
+	unsigned int stageCounter = 0;
+
 	while(window.isOpen() && (false == Input::IsKeyPressed(VK_ESCAPE)))
 	{
-		ScopedTimer timer("Render");
+		float dt = t.RestartAndGetElapsedTimeMS();
+
 		window.pollEvents();
+
 #ifdef TOBII
 		error = tobii_wait_for_callbacks(NULL, 1, &pDevice);
 		assert(error == TOBII_ERROR_NO_ERROR || error == TOBII_ERROR_TIMED_OUT);
@@ -953,90 +998,495 @@ int main()
 		error = tobii_device_process_callbacks(pDevice);
 		assert(error == TOBII_ERROR_NO_ERROR);
 #endif
-		RunJPEG(width, height);
-
-		// Wait for compute
-		gComputeQueue->Signal(gComputeFence.Get(), gComputeFenceValue);
-		if(gComputeFenceValue > gComputeFence->GetCompletedValue())
+		if(stageCounter == MAX_STAGES)
 		{
-			gComputeFence->SetEventOnCompletion(gComputeFenceValue, gComputeEventHandle);
-			WaitForMultipleObjects(1, &gComputeEventHandle, TRUE, INFINITE);
+			gCurrentState = States::FINISHED;
 		}
-		gComputeFenceValue++;
-
-		gDirectAllocator->Reset();
-		gDirectList->Reset(gDirectAllocator.Get(), nullptr);
-
-		//Copy from compute shader to backbuffer
+		switch(gCurrentState)
 		{
-			D3D12_RESOURCE_BARRIER barrier = {};
-			barrier.Type				   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-			barrier.Transition.pResource   = gRTResource[gFrameIndex].Get();
-			barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-			barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
-			barrier.Transition.StateAfter  = D3D12_RESOURCE_STATE_COPY_DEST;
-			gDirectList->ResourceBarrier(1, &barrier);
-		}
-
-		gDirectList->CopyResource(gRTResource[gFrameIndex].Get(), gWrittableRes.Get());
-
+		case States::INTRO:
 		{
-			D3D12_RESOURCE_BARRIER barrier = {};
-			barrier.Type				   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-			barrier.Transition.pResource   = gRTResource[gFrameIndex].Get();
-			barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-			barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
-			barrier.Transition.StateAfter  = D3D12_RESOURCE_STATE_RENDER_TARGET;
-			gDirectList->ResourceBarrier(1, &barrier);
-		}
+			//Logic
 
-		gDirectList->Close();
+			// Start the test
+			if(Input::IsKeyTyped(VK_RETURN))
+			{
+				// Start with the RAW image
+				gCurrentState = States::PREPARE_RAW;
+				timeCounter   = Constants::PREPARE_TIME_MS;
+			}
 
-		{
-			ID3D12CommandList* listsToExceute[] = {gDirectList.Get()};
-			gDirectQueue->ExecuteCommandLists(1, listsToExceute);
-		}
+			// Render
 
-		D2D1_SIZE_F rtSize   = gD2DRenderTarget[gFrameIndex]->GetSize();
-		D2D1_RECT_F textRect = D2D1::RectF(0, 0, rtSize.width, rtSize.height);
-		static WCHAR buffer[] =
-			L"Welcome to Henrik and Victors Study.\n\n"
+			gDirectAllocator->Reset();
+			gDirectList->Reset(gDirectAllocator.Get(), nullptr);
+			{
+				D3D12_RESOURCE_BARRIER barrier = {};
+				barrier.Type				   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+				barrier.Transition.pResource   = gRTResource[gFrameIndex].Get();
+				barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+				barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
+				barrier.Transition.StateAfter  = D3D12_RESOURCE_STATE_RENDER_TARGET;
+				gDirectList->ResourceBarrier(1, &barrier);
+			}
 
-			"In this study you will be presented with two images for approx 200 ms each. \n"
-			"After that we ask you to pick between image [1] or image [2], depending on which one you thought "
-			"\n"
-			"looked most pleasing.\n\n"
+			gDirectList->Close();
+			{
+				ID3D12CommandList* listsToExceute[] = {gDirectList.Get()};
+				gDirectQueue->ExecuteCommandLists(1, listsToExceute);
+			}
 
-			"Press [ENTER] to Start the study.";
+			D2D1_SIZE_F rtSize   = gD2DRenderTarget[gFrameIndex]->GetSize();
+			D2D1_RECT_F textRect = D2D1::RectF(0, 0, rtSize.width, rtSize.height);
 
-		static float lol = 0;
-		lol += 0.5f;
-		int sizeLol = ARRAYSIZE(buffer) < lol ? ARRAYSIZE(buffer) : lol ;
+			// Accquire our wrapped render target resource for he current back buffer.
+			gDevice11On12->AcquireWrappedResources(gWrappedResource[gFrameIndex].GetAddressOf(), 1);
 
-		// Accquire our wrapped render target resource for he current back buffer.
-		gDevice11On12->AcquireWrappedResources(gWrappedResource[gFrameIndex].GetAddressOf(), 1);
-
-		// Render text directly to the backbuffer.
-		gD2DDeviceContext->SetTarget(gD2DRenderTarget[gFrameIndex].Get());
-		gD2DDeviceContext->BeginDraw();
-		static bool lol2 = false;
-		lol2 |= Input::IsKeyTyped(VK_RETURN);
-		if(false == lol2)
+			// Render text directly to the backbuffer.
+			gD2DDeviceContext->SetTarget(gD2DRenderTarget[gFrameIndex].Get());
+			gD2DDeviceContext->BeginDraw();
 			gD2DDeviceContext->Clear();
-		gD2DDeviceContext->SetTransform(D2D1::Matrix3x2F::Translation(0, 0));
-		gD2DDeviceContext->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_DEFAULT);
-		gD2DDeviceContext->DrawTextW(
-			buffer, sizeLol, gDTextFormat.Get(), &textRect, gTextBrush.Get());
-		gD2DDeviceContext->EndDraw();
+			gD2DDeviceContext->SetTransform(D2D1::Matrix3x2F::Translation(0, 0));
+			gD2DDeviceContext->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_DEFAULT);
+			gD2DDeviceContext->DrawTextW(Constants::IntroText,
+										 ARRAYSIZE(Constants::IntroText),
+										 gDTextFormat.Get(),
+										 &textRect,
+										 gTextBrush.Get());
+			gD2DDeviceContext->EndDraw();
 
-		// Release our wrapped render target resource. Releasing
-		// transitions the back buffer resource to the state
-		// specified as the OutState when the wrapped resource was
-		// created.
-		gDevice11On12->ReleaseWrappedResources(gWrappedResource[gFrameIndex].GetAddressOf(), 1);
-		// Flush to submit the 11 command list to the shared command queue
-		gDevice11Context->Flush();
+			// Release our wrapped render target resource. Releasing
+			// transitions the back buffer resource to the state
+			// specified as the OutState when the wrapped resource was
+			// created.
+			gDevice11On12->ReleaseWrappedResources(gWrappedResource[gFrameIndex].GetAddressOf(), 1);
+			// Flush to submit the 11 command list to the shared command queue
+			gDevice11Context->Flush();
+		}
+		break;
+		case States::FINISHED:
+		{
+			//Logic
 
+			// Start the test
+			if(Input::IsKeyTyped(VK_RETURN))
+			{
+				// Exit the main loop
+				window.closeWindow();
+			}
+
+			// Render
+
+			gDirectAllocator->Reset();
+			gDirectList->Reset(gDirectAllocator.Get(), nullptr);
+			{
+				D3D12_RESOURCE_BARRIER barrier = {};
+				barrier.Type				   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+				barrier.Transition.pResource   = gRTResource[gFrameIndex].Get();
+				barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+				barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
+				barrier.Transition.StateAfter  = D3D12_RESOURCE_STATE_RENDER_TARGET;
+				gDirectList->ResourceBarrier(1, &barrier);
+			}
+
+			gDirectList->Close();
+			{
+				ID3D12CommandList* listsToExceute[] = {gDirectList.Get()};
+				gDirectQueue->ExecuteCommandLists(1, listsToExceute);
+			}
+
+			D2D1_SIZE_F rtSize   = gD2DRenderTarget[gFrameIndex]->GetSize();
+			D2D1_RECT_F textRect = D2D1::RectF(0, 0, rtSize.width, rtSize.height);
+
+			// Accquire our wrapped render target resource for he current back buffer.
+			gDevice11On12->AcquireWrappedResources(gWrappedResource[gFrameIndex].GetAddressOf(), 1);
+
+			// Render text directly to the backbuffer.
+			gD2DDeviceContext->SetTarget(gD2DRenderTarget[gFrameIndex].Get());
+			gD2DDeviceContext->BeginDraw();
+			gD2DDeviceContext->Clear();
+			gD2DDeviceContext->SetTransform(D2D1::Matrix3x2F::Translation(0, 0));
+			gD2DDeviceContext->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_DEFAULT);
+			gD2DDeviceContext->DrawTextW(Constants::ExitText,
+										 ARRAYSIZE(Constants::ExitText),
+										 gDTextFormat.Get(),
+										 &textRect,
+										 gTextBrush.Get());
+			gD2DDeviceContext->EndDraw();
+
+			// Release our wrapped render target resource. Releasing
+			// transitions the back buffer resource to the state
+			// specified as the OutState when the wrapped resource was
+			// created.
+			gDevice11On12->ReleaseWrappedResources(gWrappedResource[gFrameIndex].GetAddressOf(), 1);
+			// Flush to submit the 11 command list to the shared command queue
+			gDevice11Context->Flush();
+		}
+		break;
+		case States::SELECTION:
+		{
+
+			//Logic
+			WCHAR displayText[256];
+			int textSize;
+			textSize = swprintf_s(displayText,
+								  L"Stage[%i/%i]\n\n%s",
+								  stageCounter,
+								  MAX_STAGES,
+								  Constants::SelectionText);
+			if(Input::IsKeyPressed('1'))
+			{
+				gCurrentState		   = States::PREPARE_RAW;
+				gResults[stageCounter] = 1;
+				timeCounter			   = Constants::PREPARE_TIME_MS;
+				stageCounter++;
+			}
+			else if(Input::IsKeyPressed('2'))
+			{
+				gCurrentState		   = States::PREPARE_RAW;
+				timeCounter			   = Constants::PREPARE_TIME_MS;
+				gResults[stageCounter] = 2;
+				stageCounter++;
+			} // Render
+
+			gDirectAllocator->Reset();
+			gDirectList->Reset(gDirectAllocator.Get(), nullptr);
+			{
+				D3D12_RESOURCE_BARRIER barrier = {};
+				barrier.Type				   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+				barrier.Transition.pResource   = gRTResource[gFrameIndex].Get();
+				barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+				barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
+				barrier.Transition.StateAfter  = D3D12_RESOURCE_STATE_RENDER_TARGET;
+				gDirectList->ResourceBarrier(1, &barrier);
+			}
+
+			gDirectList->Close();
+			{
+				ID3D12CommandList* listsToExceute[] = {gDirectList.Get()};
+				gDirectQueue->ExecuteCommandLists(1, listsToExceute);
+			}
+
+			D2D1_SIZE_F rtSize   = gD2DRenderTarget[gFrameIndex]->GetSize();
+			D2D1_RECT_F textRect = D2D1::RectF(0, 0, rtSize.width, rtSize.height);
+
+			// Accquire our wrapped render target resource for he current back buffer.
+			gDevice11On12->AcquireWrappedResources(gWrappedResource[gFrameIndex].GetAddressOf(), 1);
+
+			// Render text directly to the backbuffer.
+			gD2DDeviceContext->SetTarget(gD2DRenderTarget[gFrameIndex].Get());
+			gD2DDeviceContext->BeginDraw();
+			gD2DDeviceContext->Clear();
+			gD2DDeviceContext->SetTransform(D2D1::Matrix3x2F::Translation(0, 0));
+			gD2DDeviceContext->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_DEFAULT);
+			gD2DDeviceContext->DrawTextW(displayText, textSize,
+										 gDTextFormat.Get(),
+										 &textRect,
+										 gTextBrush.Get());
+			gD2DDeviceContext->EndDraw();
+
+			// Release our wrapped render target resource. Releasing
+			// transitions the back buffer resource to the state
+			// specified as the OutState when the wrapped resource was
+			// created.
+			gDevice11On12->ReleaseWrappedResources(gWrappedResource[gFrameIndex].GetAddressOf(), 1);
+			// Flush to submit the 11 command list to the shared command queue
+			gDevice11Context->Flush();
+		}
+		break;
+		case States::PREPARE_RAW:
+		{
+			timeCounter -= dt;
+			if(timeCounter < 1)
+			{
+				gCurrentState = States::PRESENT_RAW;
+				timeCounter   = 0;
+			}
+			int displayNumber = timeCounter / 1000;
+			//Logic
+
+			// RAW image is always image number 1
+			WCHAR displayText[32];
+			int size = swprintf_s(displayText, L"Image [1]\n %i", displayNumber);
+
+			// Render
+
+			gDirectAllocator->Reset();
+			gDirectList->Reset(gDirectAllocator.Get(), nullptr);
+			{
+				D3D12_RESOURCE_BARRIER barrier = {};
+				barrier.Type				   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+				barrier.Transition.pResource   = gRTResource[gFrameIndex].Get();
+				barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+				barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
+				barrier.Transition.StateAfter  = D3D12_RESOURCE_STATE_RENDER_TARGET;
+				gDirectList->ResourceBarrier(1, &barrier);
+			}
+
+			gDirectList->Close();
+			{
+				ID3D12CommandList* listsToExceute[] = {gDirectList.Get()};
+				gDirectQueue->ExecuteCommandLists(1, listsToExceute);
+			}
+
+			D2D1_SIZE_F rtSize   = gD2DRenderTarget[gFrameIndex]->GetSize();
+			D2D1_RECT_F textRect = D2D1::RectF(0, 0, rtSize.width, rtSize.height);
+
+			// Accquire our wrapped render target resource for he current back buffer.
+			gDevice11On12->AcquireWrappedResources(gWrappedResource[gFrameIndex].GetAddressOf(), 1);
+
+			// Render text directly to the backbuffer.
+			gD2DDeviceContext->SetTarget(gD2DRenderTarget[gFrameIndex].Get());
+			gD2DDeviceContext->BeginDraw();
+			gD2DDeviceContext->Clear();
+			gD2DDeviceContext->SetTransform(D2D1::Matrix3x2F::Translation(0, 0));
+			gD2DDeviceContext->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_DEFAULT);
+			gD2DDeviceContext->DrawTextW(
+				displayText, size, gDTextFormat.Get(), &textRect, gTextBrush.Get());
+			gD2DDeviceContext->EndDraw();
+
+			// Release our wrapped render target resource. Releasing
+			// transitions the back buffer resource to the state
+			// specified as the OutState when the wrapped resource was
+			// created.
+			gDevice11On12->ReleaseWrappedResources(gWrappedResource[gFrameIndex].GetAddressOf(), 1);
+			// Flush to submit the 11 command list to the shared command queue
+			gDevice11Context->Flush();
+		}
+		break;
+		case States::PREPARE_JPEG:
+		{
+			timeCounter -= dt;
+			if(timeCounter < 1)
+			{
+				gCurrentState = States::PRESENT_JPEG;
+				timeCounter   = 0;
+			}
+			int displayNumber = timeCounter / 1000;
+			//Logic
+
+			// RAW image is always image number 1
+			WCHAR displayText[32];
+			int size = swprintf_s(displayText, L"Image [2]\n %i", displayNumber);
+
+			// Render
+
+			gDirectAllocator->Reset();
+			gDirectList->Reset(gDirectAllocator.Get(), nullptr);
+			{
+				D3D12_RESOURCE_BARRIER barrier = {};
+				barrier.Type				   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+				barrier.Transition.pResource   = gRTResource[gFrameIndex].Get();
+				barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+				barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
+				barrier.Transition.StateAfter  = D3D12_RESOURCE_STATE_RENDER_TARGET;
+				gDirectList->ResourceBarrier(1, &barrier);
+			}
+
+			gDirectList->Close();
+			{
+				ID3D12CommandList* listsToExceute[] = {gDirectList.Get()};
+				gDirectQueue->ExecuteCommandLists(1, listsToExceute);
+			}
+
+			D2D1_SIZE_F rtSize   = gD2DRenderTarget[gFrameIndex]->GetSize();
+			D2D1_RECT_F textRect = D2D1::RectF(0, 0, rtSize.width, rtSize.height);
+
+			// Accquire our wrapped render target resource for he current back buffer.
+			gDevice11On12->AcquireWrappedResources(gWrappedResource[gFrameIndex].GetAddressOf(), 1);
+
+			// Render text directly to the backbuffer.
+			gD2DDeviceContext->SetTarget(gD2DRenderTarget[gFrameIndex].Get());
+			gD2DDeviceContext->BeginDraw();
+			gD2DDeviceContext->Clear();
+			gD2DDeviceContext->SetTransform(D2D1::Matrix3x2F::Translation(0, 0));
+			gD2DDeviceContext->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_DEFAULT);
+			gD2DDeviceContext->DrawTextW(
+				displayText, size, gDTextFormat.Get(), &textRect, gTextBrush.Get());
+			gD2DDeviceContext->EndDraw();
+
+			// Release our wrapped render target resource. Releasing
+			// transitions the back buffer resource to the state
+			// specified as the OutState when the wrapped resource was
+			// created.
+			gDevice11On12->ReleaseWrappedResources(gWrappedResource[gFrameIndex].GetAddressOf(), 1);
+			// Flush to submit the 11 command list to the shared command queue
+			gDevice11Context->Flush();
+		}
+		break;
+		case States::PRESENT_JPEG:
+		{
+			//Logic
+
+			timeCounter += dt;
+			if(timeCounter > Constants::DISPLAY_TIME_MS)
+			{
+				// After JPEG we go to select screen!
+				gCurrentState = States::SELECTION;
+			}
+			// Render
+			TIF(gComputeAllocator->Reset());
+			gComputeList->Reset(gComputeAllocator.Get(), gComputePipeline.Get());
+
+			gComputeList->SetComputeRootSignature(gRootCompute.Get());
+
+			ID3D12DescriptorHeap* heaps[] = {gSRVHeap.Get()};
+			gComputeList->SetDescriptorHeaps(1, heaps);
+
+			{
+				D3D12_RESOURCE_BARRIER barrier1 = {};
+				barrier1.Type					= D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+				barrier1.Transition.pResource   = gWrittableRes.Get();
+				barrier1.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+				barrier1.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
+				barrier1.Transition.StateAfter  = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+				gComputeList->ResourceBarrier(1, &barrier1);
+			}
+
+			// Run Compute
+			auto h = gSRVHeap->GetGPUDescriptorHandleForHeapStart();
+			UINT size =
+				gDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+			gComputeList->SetComputeRootDescriptorTable(0, h);
+			h.ptr += size;
+			gComputeList->SetComputeRootDescriptorTable(1, h);
+
+			//printf("Gaze Point(%i,%i)\n", gazePoint[0], gazePoint[1]);
+#ifndef TOBII
+			auto pos	  = Input::GetMousePosition();
+			gGazePoint[0] = pos.x;
+			gGazePoint[1] = pos.y;
+#endif
+			struct P
+			{
+				int point[2];
+				JPEG_SETTINGS setting;
+			} payload;
+			payload.point[0] = gGazePoint[0];
+			payload.point[1] = gGazePoint[1];
+			payload.setting  = settings[stageCounter];
+			gComputeList->SetComputeRoot32BitConstants(
+				2, 4, reinterpret_cast<const LPVOID>(&payload), 0);
+			gComputeList->Dispatch((width / 8), (height / 8), 1);
+
+			{
+				D3D12_RESOURCE_BARRIER barrier = {};
+				barrier.Type				   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+				barrier.Transition.pResource   = gWrittableRes.Get();
+				barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+				barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+				barrier.Transition.StateAfter  = D3D12_RESOURCE_STATE_COPY_SOURCE;
+				gComputeList->ResourceBarrier(1, &barrier);
+			}
+			gComputeList->Close();
+
+			{
+				ID3D12CommandList* listsToExceute[] = {gComputeList.Get()};
+				gComputeQueue->ExecuteCommandLists(1, listsToExceute);
+			}
+
+			// Wait for compute
+			gComputeQueue->Signal(gComputeFence.Get(), gComputeFenceValue);
+			if(gComputeFenceValue > gComputeFence->GetCompletedValue())
+			{
+				gComputeFence->SetEventOnCompletion(gComputeFenceValue, gComputeEventHandle);
+				WaitForMultipleObjects(1, &gComputeEventHandle, TRUE, INFINITE);
+			}
+			gComputeFenceValue++;
+
+			gDirectAllocator->Reset();
+			gDirectList->Reset(gDirectAllocator.Get(), nullptr);
+			//Copy from compute shader to backbuffer
+			{
+				D3D12_RESOURCE_BARRIER barrier = {};
+				barrier.Type				   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+				barrier.Transition.pResource   = gRTResource[gFrameIndex].Get();
+				barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+				barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
+				barrier.Transition.StateAfter  = D3D12_RESOURCE_STATE_COPY_DEST;
+				gDirectList->ResourceBarrier(1, &barrier);
+			}
+
+			gDirectList->CopyResource(gRTResource[gFrameIndex].Get(), gWrittableRes.Get());
+
+			{
+				D3D12_RESOURCE_BARRIER barrier = {};
+				barrier.Type				   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+				barrier.Transition.pResource   = gRTResource[gFrameIndex].Get();
+				barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+				barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+				barrier.Transition.StateAfter  = D3D12_RESOURCE_STATE_PRESENT;
+				gDirectList->ResourceBarrier(1, &barrier);
+			}
+
+			gDirectList->Close();
+			{
+				ID3D12CommandList* listsToExceute[] = {gDirectList.Get()};
+				gDirectQueue->ExecuteCommandLists(1, listsToExceute);
+			}
+		}
+		break;
+		case States::PRESENT_RAW:
+		{
+			timeCounter += dt;
+			if(timeCounter > Constants::DISPLAY_TIME_MS)
+			{
+				// After RAW we go to JPEG
+				gCurrentState = States::PREPARE_JPEG;
+				timeCounter   = Constants::PREPARE_TIME_MS;
+			}
+			// Render
+			gDirectAllocator->Reset();
+			gDirectList->Reset(gDirectAllocator.Get(), nullptr);
+			//Copy from compute shader to backbuffer
+			{
+				D3D12_RESOURCE_BARRIER barrier = {};
+				barrier.Type				   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+				barrier.Transition.pResource   = gRTResource[gFrameIndex].Get();
+				barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+				barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
+				barrier.Transition.StateAfter  = D3D12_RESOURCE_STATE_COPY_DEST;
+				gDirectList->ResourceBarrier(1, &barrier);
+
+				D3D12_RESOURCE_BARRIER barrier2 = {};
+				barrier2.Type					= D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+				barrier2.Transition.pResource   = gInputImageRes.Get();
+				barrier2.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+				barrier2.Transition.StateBefore = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+				barrier2.Transition.StateAfter  = D3D12_RESOURCE_STATE_COPY_SOURCE;
+				gDirectList->ResourceBarrier(1, &barrier2);
+			}
+
+			gDirectList->CopyResource(gRTResource[gFrameIndex].Get(), gInputImageRes.Get());
+
+			{
+				D3D12_RESOURCE_BARRIER barrier = {};
+				barrier.Type				   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+				barrier.Transition.pResource   = gRTResource[gFrameIndex].Get();
+				barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+				barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+				barrier.Transition.StateAfter  = D3D12_RESOURCE_STATE_PRESENT;
+				gDirectList->ResourceBarrier(1, &barrier);
+
+				D3D12_RESOURCE_BARRIER barrier2 = {};
+				barrier2.Type					= D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+				barrier2.Transition.pResource   = gInputImageRes.Get();
+				barrier2.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+				barrier2.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
+				barrier2.Transition.StateAfter  = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+				gDirectList->ResourceBarrier(1, &barrier2);
+			}
+
+			gDirectList->Close();
+			{
+				ID3D12CommandList* listsToExceute[] = {gDirectList.Get()};
+				gDirectQueue->ExecuteCommandLists(1, listsToExceute);
+			}
+		}
+		break;
+		}
+
+		// Wait for the render
 		gDirectQueue->Signal(gDirectFence.Get(), gDirectFenceValue);
 		if(gDirectFenceValue > gDirectFence->GetCompletedValue())
 		{
@@ -1055,61 +1505,20 @@ int main()
 	tobii_api_destroy(pApi);
 #endif
 
+	// Output the results to file!
+	std::ofstream myfile;
+	myfile.open("results.txt", std::ios::app);
+	myfile << "Start of Test-------------------------\n";
+	for(int i = 0; i < MAX_STAGES; i++)
+	{
+		myfile << "CirlceRadius: " << settings[i].circleRatio << '\n';
+		myfile << "CenterQuality: " << settings[i].centerQuality << '\n';
+		myfile << "RAW[1] or JPEG[2]: " << gResults[i] << "\n\n";
+	}
+
+	myfile.close();
+
 	return 0;
-}
-
-void RunJPEG(int width, int height)
-{
-	TIF(gComputeAllocator->Reset());
-	gComputeList->Reset(gComputeAllocator.Get(), gComputePipeline.Get());
-
-	gComputeList->SetComputeRootSignature(gRootCompute.Get());
-
-	ID3D12DescriptorHeap* heaps[] = {gSRVHeap.Get()};
-	gComputeList->SetDescriptorHeaps(1, heaps);
-
-	{
-		D3D12_RESOURCE_BARRIER barrier1 = {};
-		barrier1.Type					= D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		barrier1.Transition.pResource   = gWrittableRes.Get();
-		barrier1.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-		barrier1.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
-		barrier1.Transition.StateAfter  = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-		gComputeList->ResourceBarrier(1, &barrier1);
-	}
-
-	// Run Compute
-	auto h	= gSRVHeap->GetGPUDescriptorHandleForHeapStart();
-	UINT size = gDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-	gComputeList->SetComputeRootDescriptorTable(0, h);
-	h.ptr += size;
-	gComputeList->SetComputeRootDescriptorTable(1, h);
-
-	//printf("Gaze Point(%i,%i)\n", gazePoint[0], gazePoint[1]);
-#ifndef TOBII
-	auto pos	  = Input::GetMousePosition();
-	gGazePoint[0] = pos.x;
-	gGazePoint[1] = pos.y;
-#endif
-	gComputeList->SetComputeRoot32BitConstants(
-		2, 2, reinterpret_cast<const LPVOID>(&gGazePoint), 0);
-	gComputeList->Dispatch((width / 8), (height / 8), 1);
-
-	{
-		D3D12_RESOURCE_BARRIER barrier = {};
-		barrier.Type				   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-		barrier.Transition.pResource   = gWrittableRes.Get();
-		barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-		barrier.Transition.StateAfter  = D3D12_RESOURCE_STATE_COPY_SOURCE;
-		gComputeList->ResourceBarrier(1, &barrier);
-	}
-	gComputeList->Close();
-
-	{
-		ID3D12CommandList* listsToExceute[] = {gComputeList.Get()};
-		gComputeQueue->ExecuteCommandLists(1, listsToExceute);
-	}
 }
 
 void gazePointCallback(tobii_gaze_point_t const* pPoint, void* userData)

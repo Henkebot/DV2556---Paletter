@@ -167,21 +167,19 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClInclude Include="Color24.h" />
-    <ClInclude Include="Color32.h" />
-    <ClInclude Include="Input.h" />
+    <ClInclude Include="Timers\Timer.h" />
+    <ClInclude Include="Utillity\Input.h" />
     <ClInclude Include="Paletter.h" />
     <ClInclude Include="pch.h" />
-    <ClInclude Include="ScopedTimer.h" />
-    <ClInclude Include="stb_image.h" />
-    <ClInclude Include="stb_image_write.h" />
-    <ClInclude Include="VideoMode.h" />
-    <ClInclude Include="Window.h" />
+    <ClInclude Include="Timers\ScopedTimer.h" />
+    <ClInclude Include="Utillity\stb_image.h" />
+    <ClInclude Include="Utillity\stb_image_write.h" />
+    <ClInclude Include="Constants.h" />
+    <ClInclude Include="Utillity\VideoMode.h" />
+    <ClInclude Include="Utillity\Window.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="Color24.cpp" />
-    <ClCompile Include="Color32.cpp" />
-    <ClCompile Include="Input.cpp" />
+    <ClCompile Include="Utillity\Input.cpp" />
     <ClCompile Include="Paletter.cpp" />
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
@@ -189,11 +187,11 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="VideoMode.cpp" />
-    <ClCompile Include="Window.cpp" />
+    <ClCompile Include="Utillity\VideoMode.cpp" />
+    <ClCompile Include="Utillity\Window.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <FxCompile Include="ComputeShader.hlsl">
+    <FxCompile Include="Shaders\JPEGDecodeEncode.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Compute</ShaderType>
       <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">5.1</ShaderModel>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Compute</ShaderType>
